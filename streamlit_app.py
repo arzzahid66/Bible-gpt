@@ -1,11 +1,12 @@
 import streamlit as st
 import requests
-from datetime import datetime, timedelta
 
-# API endpoints
+# API Endpoints
 BASE_URL = "https://biblegpt-be-ai.xeventechnologies.com/api/v1"
 LOGIN_URL = f"{BASE_URL}/login"
 GENERAL_CHATBOT_URL = f"{BASE_URL}/Gen-chatbot"
+GET_ALL_NAMESPACES_URL = f"{BASE_URL}/get_all_namespaces"
+BOOK_WISE_CHAT_URL = f"{BASE_URL}/book-wise-chat"
 
 # Initialize session state
 if 'token' not in st.session_state:
@@ -18,6 +19,14 @@ if 'current_bot_id' not in st.session_state:
     st.session_state.current_bot_id = ""
 if 'conversations' not in st.session_state:
     st.session_state.conversations = {}
+
+# For Book-wise Chat
+if 'selected_book' not in st.session_state:
+    st.session_state.selected_book = None
+if 'book_chat_bot_id' not in st.session_state:
+    st.session_state.book_chat_bot_id = ""
+if 'book_conversations' not in st.session_state:
+    st.session_state.book_conversations = {}
 
 def login(email, password):
     payload = {"email": email, "password": password}
@@ -36,113 +45,132 @@ def general_chatbot_query(query, bot_id=""):
         "Authorization": f"Bearer {st.session_state.token}",
         "Content-Type": "application/json"
     }
-    
-    # Convert bot_id to string and handle None/empty cases
-    bot_id = str(bot_id) if bot_id else ""
-    
     payload = {
         "user_id": st.session_state.user_id,
         "query": query,
-        "bot_id": bot_id
+        "bot_id": bot_id if bot_id else ""
     }
-    
-    try:
-        print(f"Debug - Sending payload: {payload}")  # Debug logging
-        response = requests.post(GENERAL_CHATBOT_URL, headers=headers, json=payload)
-        print(f"Debug - Response status: {response.status_code}")  # Debug logging
-        
-        if response.status_code == 200:
-            response_data = response.json().get('data', {})
-            if response_data:
-                new_bot_id = str(response_data.get('bot_id')) if response_data.get('bot_id') else ""
-                return response_data.get('response'), new_bot_id
-            else:
-                st.error("Empty response from server")
-                return None, None
-        elif response.status_code == 401:
-            st.warning("Session expired. Please login again.")
-            st.session_state.clear()
-            st.rerun()
-        elif response.status_code == 422:
-            error_detail = response.json().get('detail', 'Unknown validation error')
-            st.error(f"Request validation error: {error_detail}")
-            print(f"Debug - Payload sent: {payload}")  # For debugging
-            return None, None
-        else:
-            st.error(f"Server error: {response.status_code}")
-            print(f"Debug - Response: {response.text}")  # For debugging
-            return None, None
-    except requests.exceptions.RequestException as e:
-        st.error(f"Network error: {str(e)}")
-        return None, None
-    except Exception as e:
-        st.error(f"Unexpected error: {str(e)}")
-        print(f"Debug - Exception: {str(e)}")  # For debugging
-        return None, None
 
-def main_app():
-    st.title("Bible GPT Chat")
+    response = requests.post(GENERAL_CHATBOT_URL, headers=headers, json=payload)
+    if response.status_code == 200:
+        response_data = response.json()
+        if response_data.get('data'):
+            new_bot_id = str(response_data['data'].get('bot_id', '')) if response_data['data'].get('bot_id') else ''
+            return response_data['data'].get('response'), new_bot_id
+    return None, None
+
+def get_all_namespaces():
+    headers = {"Authorization": f"Bearer {st.session_state.token}"}
+    response = requests.get(GET_ALL_NAMESPACES_URL, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        return [item['namespace'] for item in data.get('data', [])]
+    return []
+
+def book_wise_chat_query(query, book_name, bot_id=""):
+    headers = {
+        "Authorization": f"Bearer {st.session_state.token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "user_id": st.session_state.user_id,
+        "query": query,
+        "bot_id": bot_id,
+        "book_name": book_name
+    }
+
+    response = requests.post(BOOK_WISE_CHAT_URL, headers=headers, json=payload)
+    if response.status_code == 200:
+        response_data = response.json()
+        if response_data.get('data'):
+            new_bot_id = str(response_data['data'].get('bot_id', '')) if response_data['data'].get('bot_id') else ''
+            return response_data['data'].get('response'), new_bot_id
+    return None, None
+
+def general_chat_page():
+    st.title("📖 General Bible Chat")
     st.sidebar.title(f"Welcome, {st.session_state.email}")
     
     if st.sidebar.button("Logout"):
         st.session_state.clear()
         st.rerun()
     
-    if st.sidebar.button("New Chat"):
+    if st.sidebar.button("New General Chat"):
         st.session_state.current_bot_id = ""
         st.session_state.conversations = {}
         st.rerun()
     
-    # Initialize conversation if not exists
     if st.session_state.current_bot_id not in st.session_state.conversations:
         st.session_state.conversations[st.session_state.current_bot_id] = []
     
-    # Display conversation
     for msg in st.session_state.conversations[st.session_state.current_bot_id]:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
     
-    # Handle user input
     if prompt := st.chat_input("Ask your question..."):
-        # Add user message to conversation
         with st.chat_message("user"):
             st.write(prompt)
         
-        # Get bot response
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                # Ensure we're using the correct bot_id
-                current_bot_id = st.session_state.current_bot_id or ""
-                response, new_bot_id = general_chatbot_query(prompt, current_bot_id)
-                
+                response, new_bot_id = general_chatbot_query(prompt, st.session_state.current_bot_id)
                 if response:
-                    # Update bot_id if this was first message or if we got a new bot_id
-                    if new_bot_id:
-                        if current_bot_id != new_bot_id:
-                            st.session_state.current_bot_id = new_bot_id
-                            if current_bot_id in st.session_state.conversations:
-                                st.session_state.conversations[new_bot_id] = st.session_state.conversations.pop(current_bot_id)
-                            else:
-                                st.session_state.conversations[new_bot_id] = []
+                    if new_bot_id and not st.session_state.current_bot_id:
+                        st.session_state.current_bot_id = new_bot_id
+                        st.session_state.conversations[new_bot_id] = []
+                        if "" in st.session_state.conversations:
+                            st.session_state.conversations[new_bot_id] = st.session_state.conversations.pop("")
                     
-                    # Use current bot_id for storing messages
                     conversation_key = st.session_state.current_bot_id
-                    
-                    # Add messages to conversation
-                    st.session_state.conversations[conversation_key].append({
-                        "role": "user",
-                        "content": prompt
-                    })
-                    st.session_state.conversations[conversation_key].append({
-                        "role": "assistant",
-                        "content": response
-                    })
+                    st.session_state.conversations[conversation_key].extend([
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": response}
+                    ])
                     st.write(response)
                 else:
-                    st.error("Failed to get response. Please try reloading the page or logging in again.")
+                    st.error("Failed to get response.")
+
+def book_wise_chat_page():
+    st.title("📚 Book Wise Chat")
+    st.sidebar.title("Select Bible Book")
+    
+    namespaces = get_all_namespaces()
+    selected_book = st.sidebar.radio("Books:", namespaces)
+
+    if selected_book != st.session_state.selected_book:
+        st.session_state.selected_book = selected_book
+        st.session_state.book_chat_bot_id = ""
+        st.session_state.book_conversations[selected_book] = []
+        st.rerun()
+
+    if selected_book not in st.session_state.book_conversations:
+        st.session_state.book_conversations[selected_book] = []
+
+    for msg in st.session_state.book_conversations[selected_book]:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    if prompt := st.chat_input(f"Ask about {selected_book}..."):
+        with st.chat_message("user"):
+            st.write(prompt)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                response, new_bot_id = book_wise_chat_query(prompt, selected_book, st.session_state.book_chat_bot_id)
+                if response:
+                    if new_bot_id and not st.session_state.book_chat_bot_id:
+                        st.session_state.book_chat_bot_id = new_bot_id
+                    
+                    st.session_state.book_conversations[selected_book].extend([
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": response}
+                    ])
+                    st.write(response)
+                else:
+                    st.error("Failed to get book-wise response.")
 
 def login_page():
-    st.title("Bible GPT Login")
+    st.title("📖 Bible GPT Login")
     with st.form("login"):
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
@@ -153,11 +181,18 @@ def login_page():
                 st.error("Login failed")
 
 def main():
-    st.set_page_config(page_title="Bible GPT", page_icon="📖")
-    if st.session_state.get('token'):
-        main_app()
-    else:
+    st.set_page_config(page_title="Bible GPT", page_icon="📘")
+
+    if not st.session_state.get('token'):
         login_page()
+        return
+
+    page = st.sidebar.selectbox("Select Chat Mode", ["General Chat", "Book Wise Chat"])
+    
+    if page == "General Chat":
+        general_chat_page()
+    else:
+        book_wise_chat_page()
 
 if __name__ == "__main__":
     main()
