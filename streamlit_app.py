@@ -15,7 +15,7 @@ if 'user_id' not in st.session_state:
     st.session_state.user_id = None
 if 'email' not in st.session_state:
     st.session_state.email = None
-if 'current_bot_id' not in st.session_state:
+if 'current_bot_id' not in st.session_state:    
     st.session_state.current_bot_id = ""
 if 'conversations' not in st.session_state:
     st.session_state.conversations = {}
@@ -40,24 +40,6 @@ def login(email, password):
             return True
     return False
 
-def general_chatbot_query(query, bot_id=""):
-    headers = {
-        "Authorization": f"Bearer {st.session_state.token}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "user_id": st.session_state.user_id,
-        "query": query,
-        "bot_id": bot_id if bot_id else ""
-    }
-
-    response = requests.post(GENERAL_CHATBOT_URL, headers=headers, json=payload)
-    if response.status_code == 200:
-        response_data = response.json()
-        if response_data.get('data'):
-            new_bot_id = str(response_data['data'].get('bot_id', '')) if response_data['data'].get('bot_id') else ''
-            return response_data['data'].get('response'), new_bot_id
-    return None, None
 
 def get_all_namespaces():
     headers = {"Authorization": f"Bearer {st.session_state.token}"}
@@ -67,7 +49,25 @@ def get_all_namespaces():
         return [item['namespace'] for item in data.get('data', [])]
     return []
 
-def book_wise_chat_query(query, book_name, bot_id=""):
+def general_chatbot_query(query, bot_id=0):
+    headers = {
+        "Authorization": f"Bearer {st.session_state.token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "user_id": st.session_state.user_id,
+        "query": query,
+        "bot_id": bot_id  # Always include, even if 0
+    }
+
+    response = requests.post(GENERAL_CHATBOT_URL, headers=headers, json=payload)
+    if response.status_code == 200:
+        response_data = response.json()
+        if response_data.get('data'):
+            return response_data['data'].get('response'), str(response_data['data'].get('bot_id', ''))
+    return None, None
+
+def book_wise_chat_query(query, book_name, bot_id=0):
     headers = {
         "Authorization": f"Bearer {st.session_state.token}",
         "Content-Type": "application/json"
@@ -83,9 +83,9 @@ def book_wise_chat_query(query, book_name, bot_id=""):
     if response.status_code == 200:
         response_data = response.json()
         if response_data.get('data'):
-            new_bot_id = str(response_data['data'].get('bot_id', '')) if response_data['data'].get('bot_id') else ''
-            return response_data['data'].get('response'), new_bot_id
+            return response_data['data'].get('response'), str(response_data['data'].get('bot_id', ''))
     return None, None
+
 
 def general_chat_page():
     st.title("📖 General Bible Chat")
@@ -113,19 +113,23 @@ def general_chat_page():
         
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                response, new_bot_id = general_chatbot_query(prompt, st.session_state.current_bot_id)
+                response, new_bot_id = general_chatbot_query(prompt, int(st.session_state.current_bot_id or 0))
                 if response:
-                    if new_bot_id and not st.session_state.current_bot_id:
+                    # Update current_bot_id if new one is returned
+                    if new_bot_id and new_bot_id != st.session_state.current_bot_id:
+                        old_bot_id = st.session_state.current_bot_id
                         st.session_state.current_bot_id = new_bot_id
-                        st.session_state.conversations[new_bot_id] = []
-                        if "" in st.session_state.conversations:
-                            st.session_state.conversations[new_bot_id] = st.session_state.conversations.pop("")
-                    
+                        if old_bot_id and old_bot_id in st.session_state.conversations:
+                            st.session_state.conversations[new_bot_id] = st.session_state.conversations.pop(old_bot_id)
+                        elif new_bot_id not in st.session_state.conversations:
+                            st.session_state.conversations[new_bot_id] = []
+
                     conversation_key = st.session_state.current_bot_id
                     st.session_state.conversations[conversation_key].extend([
                         {"role": "user", "content": prompt},
                         {"role": "assistant", "content": response}
                     ])
+
                     st.write(response)
                 else:
                     st.error("Failed to get response.")
@@ -156,15 +160,18 @@ def book_wise_chat_page():
 
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                response, new_bot_id = book_wise_chat_query(prompt, selected_book, st.session_state.book_chat_bot_id)
+                response, new_bot_id = book_wise_chat_query(prompt, selected_book, int(st.session_state.book_chat_bot_id or 0))
+                print(response, new_bot_id )
                 if response:
-                    if new_bot_id and not st.session_state.book_chat_bot_id:
+                    # Update book_chat_bot_id if new one is returned
+                    if new_bot_id and new_bot_id != st.session_state.book_chat_bot_id:
                         st.session_state.book_chat_bot_id = new_bot_id
-                    
+
                     st.session_state.book_conversations[selected_book].extend([
                         {"role": "user", "content": prompt},
                         {"role": "assistant", "content": response}
                     ])
+
                     st.write(response)
                 else:
                     st.error("Failed to get book-wise response.")
